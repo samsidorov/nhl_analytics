@@ -33,20 +33,20 @@ with DAG(
 
     @task(task_id="fetch_nhl_schedule")
     def fetch_schedule():
-        schedule_payload = fetch_json("/schedule")
+        schedule_payload = fetch_json("/v1/schedule/now")
         insert_raw_payload("schedule", schedule_payload)
         return "schedule-stored"
 
     @task(task_id="fetch_nhl_boxscores")
     def fetch_boxscores():
-        schedule_payload = fetch_json("/schedule")
+        schedule_payload = fetch_json("/v1/schedule/now")
         games = []
-        for date in schedule_payload.get("dates", []):
-            for game in date.get("games", []):
-                games.append(game["gamePk"])
+        for week in schedule_payload.get("gameWeek", []):
+            for game in week.get("games", []):
+                games.append(game["id"])
 
         for game_id in games:
-            boxscore_payload = fetch_json(f"/game/{game_id}/boxscore")
+            boxscore_payload = fetch_json(f"/v1/gamecenter/{game_id}/boxscore")
             insert_raw_payload(f"boxscore:{game_id}", boxscore_payload)
         return f"stored-{len(games)}-boxscores"
 

@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, List
 import requests
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-API_BASE = "https://statsapi.web.nhl.com/api/v1"
+API_BASE = "https://api-web.nhle.com"
 
 
 def get_postgres_hook() -> PostgresHook:
@@ -45,35 +45,37 @@ def insert_raw_payload(source: str, payload: Dict[str, Any]) -> None:
 
 def extract_teams_from_schedule(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     teams: Dict[int, Dict[str, Any]] = {}
-    for date in payload.get("dates", []):
-        for game in date.get("games", []):
-            for side in ("home", "away"):
-                team = game["teams"][side]["team"]
-                conference = team.get("conference", {}).get("name")
-                division = team.get("division", {}).get("name")
+    for week in payload.get("gameWeek", []):
+        for game in week.get("games", []):
+            for side in ("homeTeam", "awayTeam"):
+                team = game.get(side, {})
+                if not team:
+                    continue
                 teams[team["id"]] = {
                     "team_id": team["id"],
-                    "team_name": team.get("name"),
-                    "abbreviation": team.get("abbreviation"),
-                    "conference": conference,
-                    "division": division,
+                    "team_name": team.get("commonName", {}).get("default") if isinstance(team.get("commonName"), dict) else team.get("commonName"),
+                    "abbreviation": team.get("abbrev"),
+                    "conference": None,
+                    "division": None,
                 }
     return list(teams.values())
 
 
 def extract_games_from_schedule(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     games = []
-    for date in payload.get("dates", []):
-        game_date = date.get("date")
-        for game in date.get("games", []):
+    for week in payload.get("gameWeek", []):
+        game_date = week.get("date")
+        for game in week.get("games", []):
+            home_team = game.get("homeTeam", {})
+            away_team = game.get("awayTeam", {})
             games.append(
                 {
-                    "game_id": game["gamePk"],
+                    "game_id": game["id"],
                     "season": int(game.get("season", 0)),
                     "game_date": game_date,
-                    "home_team_id": game["teams"]["home"]["team"]["id"],
-                    "away_team_id": game["teams"]["away"]["team"]["id"],
-                    "game_status": game.get("status", {}).get("detailedState"),
+                    "home_team_id": home_team.get("id"),
+                    "away_team_id": away_team.get("id"),
+                    "game_status": game.get("gameState") or game.get("gameScheduleState"),
                 }
             )
     return games
@@ -126,21 +128,18 @@ def upsert_games(games: Iterable[Dict[str, Any]]) -> None:
 
 
 def fetch_game_stats(game_id: int) -> List[Dict[str, Any]]:
-    payload = fetch_json(f"/game/{game_id}/boxscore")
+    payload = fetch_json(f"/v1/gamecenter/{game_id}/boxscore")
     stats = []
-    teams = payload.get("teams", {})
-    for side in ("home", "away"):
-        team_data = teams.get(side, {})
-        team = team_data.get("team", {})
-        team_stats = team_data.get("teamStats", {}).get("teamSkaterStats", {})
+    for side in ("homeTeam", "awayTeam"):
+        team = payload.get(side, {})
         stats.append(
             {
                 "game_id": game_id,
                 "team_id": team.get("id"),
-                "goals": int(team_stats.get("goals", 0) or 0),
-                "shots": int(team_stats.get("shots", 0) or 0),
-                "hits": int(team_stats.get("hits", 0) or 0),
-                "power_play_goals": int(team_stats.get("powerPlayGoals", 0) or 0),
+                "goals": int(team.get("score", 0) or 0),
+                "shots": int(team.get("sog", 0) or 0),
+                "hits": 0,
+                "power_play_goals": 0,
             }
         )
     return stats
