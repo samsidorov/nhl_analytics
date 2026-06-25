@@ -6,42 +6,62 @@ services:
     image: postgres:15
     container_name: nhl_postgres
     environment:
-      POSTGRES_USER: nhl_user
-      POSTGRES_PASSWORD: nhl_pass
-      POSTGRES_DB: nhl_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  airflow:
+  airflow-init:
     image: apache/airflow:2.8.1
-    container_name: airflow
     depends_on:
       - postgres
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://nhl_user:nhl_pass@postgres/nhl_db
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: ${AIRFLOW_UID}
+    entrypoint: >
+      bash -c "
+      airflow db init &&
+      airflow users create
+        --username admin
+        --password admin
+        --firstname admin
+        --lastname admin
+        --role Admin
+        --email admin@example.com
+      "
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1
+    depends_on:
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: ${AIRFLOW_UID}
     ports:
       - "8080:8080"
+    command: webserver
     volumes:
       - ../airflow/dags:/opt/airflow/dags
 
-  streamlit:
-    build: ../app
-    container_name: nhl_streamlit
-    ports:
-      - "8501:8501"
+  airflow-scheduler:
+    image: apache/airflow:2.8.1
     depends_on:
-      - postgres
-
-  api:
-    build: ../agent
-    container_name: nhl_api
-    ports:
-      - "8000:8000"
-    depends_on:
-      - postgres
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: ${AIRFLOW_UID}
+    command: scheduler
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
 
 volumes:
   pgdata:
