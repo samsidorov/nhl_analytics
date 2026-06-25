@@ -1,3 +1,4 @@
 .env
 NHL Postgre.session.sql
 .vscode/
+__pycache__/
