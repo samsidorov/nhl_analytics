@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: nhl_postgres
+    environment:
+      POSTGRES_USER: nhl_user
+      POSTGRES_PASSWORD: nhl_pass
+      POSTGRES_DB: nhl_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  airflow:
+    image: apache/airflow:2.8.1
+    container_name: airflow
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://nhl_user:nhl_pass@postgres/nhl_db
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+
+  streamlit:
+    build: ../app
+    container_name: nhl_streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      - postgres
+
+  api:
+    build: ../agent
+    container_name: nhl_api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
