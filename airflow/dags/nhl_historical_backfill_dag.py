@@ -4,14 +4,17 @@ from airflow import DAG
 from airflow.decorators import task
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+
 from nhl_utils import ensure_nhl_schema, fetch_json, fetch_stats_json, get_missing_boxscore_games, insert_raw_payload
 
+HISTORY_DAYS = 300
+
 with DAG(
-    dag_id="nhl_ingestion_dag",
-    schedule_interval="@daily",
+    dag_id="nhl_historical_backfill_dag",
+    schedule_interval=None,
     start_date=datetime(2025, 1, 1),
     catchup=False,
-    tags=["nhl", "ingestion"],
+    tags=["nhl", "backfill"],
 ) as dag:
 
     start = EmptyOperator(task_id="start")
@@ -38,29 +41,19 @@ with DAG(
         insert_raw_payload(source, team_payload)
         return "team-list-stored"
 
-    @task(task_id="fetch_nhl_scores")
-    def fetch_scores():
-        hook = PostgresHook(postgres_conn_id="postgres_default")
-        row = hook.get_first(
-            "SELECT source FROM nhl.raw_api_payloads WHERE source LIKE %s ORDER BY source DESC LIMIT 1;",
-            parameters=("score:%",),
-        )
-        if row:
-            last_date = datetime.strptime(row[0].split(":", 1)[1], "%Y-%m-%d").date()
-            start_date = last_date + timedelta(days=1)
-        else:
-            start_date = datetime.utcnow().date()
-
+    @task(task_id="fetch_historical_scores")
+    def fetch_historical_scores():
         end_date = datetime.utcnow().date()
+        start_date = end_date - timedelta(days=HISTORY_DAYS - 1)
         score_payloads = []
-        if start_date <= end_date:
-            days = (end_date - start_date).days + 1
-            for offset in range(days):
-                target_date = start_date + timedelta(days=offset)
-                date_str = target_date.isoformat()
-                payload = fetch_json(f"/v1/score/{date_str}")
-                insert_raw_payload(f"score:{date_str}", payload)
-                score_payloads.append(payload)
+
+        for offset in range((end_date - start_date).days + 1):
+            target_date = start_date + timedelta(days=offset)
+            date_str = target_date.isoformat()
+            payload = fetch_json(f"/v1/score/{date_str}")
+            insert_raw_payload(f"score:{date_str}", payload)
+            score_payloads.append(payload)
+
         return score_payloads
 
     @task(task_id="fetch_missing_boxscores")
@@ -71,7 +64,7 @@ with DAG(
             insert_raw_payload(f"boxscore:{game_id}:{game_date}", boxscore_payload)
         return f"stored-{len(missing_games)}-boxscores"
 
-    score_payloads = fetch_scores()
+    score_payloads = fetch_historical_scores()
     missing_boxscores = fetch_missing_boxscores()
 
     start >> ensure_raw_layer() >> [fetch_teams(), score_payloads]

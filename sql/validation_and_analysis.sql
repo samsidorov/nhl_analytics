@@ -1,3 +1,4 @@
+
 -- Validation and Analysis Queries for NHL Analytics Pipeline
 
 -- 1. Raw payload counts by source
